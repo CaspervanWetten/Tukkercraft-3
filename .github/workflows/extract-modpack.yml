@@ -6,7 +6,7 @@ on:
       mrpack_file:
         description: 'Name of the .mrpack file to extract'
         required: true
-        default: ''
+        default: 'mods.mrpack'
 
 jobs:
   extract:
