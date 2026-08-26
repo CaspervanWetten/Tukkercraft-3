@@ -1,0 +1,295 @@
+name: Deploy Modpack
+
+on:
+  push:
+    paths:
+      - '*.mrpack'
+  workflow_dispatch:
+    inputs:
+      mrpack_file:
+        description: 'Name of the .mrpack file to deploy'
+        required: true
+        default: ''
+
+jobs:
+  process-modpack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find .mrpack file
+        id: find_mrpack
+        run: |
+          # If workflow_dispatch provided a file, use it
+          if [ -n "${{ github.event.inputs.mrpack_file }}" ]; then
+            MRPACK_FILE="${{ github.event.inputs.mrpack_file }}"
+          else
+            # Find the first .mrpack file in the repo
+            MRPACK_FILE=$(find . -maxdepth 1 -name '*.mrpack' -type f | head -n 1)
+          fi
+          
+          if [ -z "$MRPACK_FILE" ]; then
+            echo "No .mrpack file found!"
+            exit 1
+          fi
+          
+          echo "Using modpack: $MRPACK_FILE"
+          echo "mrpack_file=$MRPACK_FILE" >> $GITHUB_OUTPUT
+          echo "mrpack_name=$(basename "$MRPACK_FILE" .mrpack)" >> $GITHUB_OUTPUT
+
+      - name: Extract .mrpack file
+        id: extract
+        run: |
+          MRPACK_FILE="${{ steps.find_mrpack.outputs.mrpack_file }}"
+          OUTPUT_DIR="extracted-modpack"
+          
+          mkdir -p "$OUTPUT_DIR"
+          unzip -q "$MRPACK_FILE" -d "$OUTPUT_DIR"
+          
+          # Check if modrinth.index.json exists
+          if [ ! -f "$OUTPUT_DIR/modrinth.index.json" ]; then
+            echo "Invalid .mrpack file - missing modrinth.index.json"
+            exit 1
+          fi
+          
+          echo "extracted_dir=$OUTPUT_DIR" >> $GITHUB_OUTPUT
+
+      - name: Parse modrinth.index.json
+        id: parse_index
+        run: |
+          INDEX_FILE="${{ steps.extract.outputs.extracted_dir }}/modrinth.index.json"
+          
+          # Extract version info
+          MODPACK_NAME=$(jq -r '.name' "$INDEX_FILE")
+          MODPACK_VERSION=$(jq -r '.versionId' "$INDEX_FILE")
+          GAME_VERSION=$(jq -r '.game' "$INDEX_FILE")
+          
+          echo "Modpack: $MODPACK_NAME v$MODPACK_VERSION for $GAME_VERSION"
+          
+          # Count mods
+          MOD_COUNT=$(jq '.files | length' "$INDEX_FILE")
+          echo "Found $MOD_COUNT mods to download"
+          
+          echo "modpack_name=$MODPACK_NAME" >> $GITHUB_OUTPUT
+          echo "modpack_version=$MODPACK_VERSION" >> $GITHUB_OUTPUT
+          echo "game_version=$GAME_VERSION" >> $GITHUB_OUTPUT
+          echo "mod_count=$MOD_COUNT" >> $GITHUB_OUTPUT
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install requests tqdm
+
+      - name: Download mod JARs
+        id: download_mods
+        run: |
+          python3 << 'EOF'
+          import json
+          import os
+          import requests
+          from pathlib import Path
+          
+          INDEX_FILE = "${{ steps.extract.outputs.extracted_dir }}/modrinth.index.json"
+          OUTPUT_DIR = "${{ steps.extract.outputs.extracted_dir }}/mods"
+          OVERWRITES_DIR = "${{ steps.extract.outputs.extracted_dir }}/overrides/mods"
+          
+          Path(OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+          
+          with open(INDEX_FILE, 'r') as f:
+              index = json.load(f)
+          
+          downloaded = 0
+          skipped = 0
+          failed = 0
+          
+          for file_info in index.get('files', []):
+              path = file_info.get('path', '')
+              downloads = file_info.get('downloads', [])
+              
+              if not downloads:
+                  print(f"Skipping {path} - no download URL")
+                  skipped += 1
+                  continue
+              
+              # Check if file already exists in overrides
+              override_path = Path(OVERWRITES_DIR) / path
+              if override_path.exists():
+                  print(f"Skipping {path} - exists in overrides")
+                  skipped += 1
+                  continue
+              
+              # Download the file
+              url = downloads[0]
+              output_path = Path(OUTPUT_DIR) / path
+              output_path.parent.mkdir(parents=True, exist_ok=True)
+              
+              try:
+                  response = requests.get(url, timeout=30)
+                  response.raise_for_status()
+                  output_path.write_bytes(response.content)
+                  print(f"Downloaded {path}")
+                  downloaded += 1
+              except Exception as e:
+                  print(f"Failed to download {path}: {e}")
+                  failed += 1
+          
+          print(f"\nDownloaded: {downloaded}, Skipped: {skipped}, Failed: {failed}")
+          
+          # Write stats to output
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"downloaded_count={downloaded}\n")
+              f.write(f"skipped_count={skipped}\n")
+              f.write(f"failed_count={failed}\n")
+          
+          if failed > 0:
+              exit(1)
+          EOF
+
+      - name: Prepare server files
+        id: prepare_server
+        run: |
+          # Create the data directory structure
+          DATA_DIR="data"
+          MODS_DIR="$DATA_DIR/mods"
+          CONFIGS_DIR="$DATA_DIR/config"
+          
+          mkdir -p "$MODS_DIR"
+          mkdir -p "$CONFIGS_DIR"
+          
+          # Copy mods from extracted modpack
+          if [ -d "${{ steps.extract.outputs.extracted_dir }}/mods" ]; then
+            cp -r "${{ steps.extract.outputs.extracted_dir }}/mods/"* "$MODS_DIR/" 2>/dev/null || true
+          fi
+          
+          # Copy overrides configs
+          if [ -d "${{ steps.extract.outputs.extracted_dir }}/overrides/config" ]; then
+            cp -r "${{ steps.extract.outputs.extracted_dir }}/overrides/config/"* "$CONFIGS_DIR/" 2>/dev/null || true
+          fi
+          
+          # Copy any other overrides (except mods which we already handled)
+          if [ -d "${{ steps.extract.outputs.extracted_dir }}/overrides" ]; then
+            for item in "${{ steps.extract.outputs.extracted_dir }}/overrides"/*; do
+              if [ "$(basename "$item")" != "mods" ] && [ "$(basename "$item")" != "config" ]; then
+                cp -r "$item" "$DATA_DIR/" 2>/dev/null || true
+              fi
+            done
+          fi
+          
+          echo "Server files prepared in $DATA_DIR"
+
+      - name: Prepare webpage files
+        id: prepare_webpage
+        run: |
+          WEB_DIR="webpage"
+          mkdir -p "$WEB_DIR"
+          
+          # Copy existing webpage files from src if they exist
+          if [ -d "src" ]; then
+            cp -r src/* "$WEB_DIR/" 2>/dev/null || true
+          fi
+          
+          # Create a simple index.html if it doesn't exist
+          if [ ! -f "$WEB_DIR/index.html" ]; then
+            cat > "$WEB_DIR/index.html" << 'EOF'
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>${{ steps.parse_index.outputs.modpack_name }}</title>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+            </head>
+            <body>
+                <h1>${{ steps.parse_index.outputs.modpack_name }}</h1>
+                <p>Version: ${{ steps.parse_index.outputs.modpack_version }}</p>
+                <p>Minecraft: ${{ steps.parse_index.outputs.game_version }}</p>
+                <p>Mods: ${{ steps.parse_index.outputs.mod_count }} total, ${{ steps.download_mods.outputs.downloaded_count }} downloaded</p>
+                <h2>Server Status</h2>
+                <p id="status">Loading...</p>
+                <script>
+                    fetch('http://localhost:25565/')
+                        .then(r => r.text())
+                        .then(text => {
+                            document.getElementById('status').textContent = 
+                                text.includes('Minecraft Server') ? 'Online' : 'Offline';
+                        })
+                        .catch(() => {
+                            document.getElementById('status').textContent = 'Offline';
+                        });
+                </script>
+            </body>
+            </html>
+            EOF
+          fi
+          
+          echo "Webpage files prepared in $WEB_DIR"
+
+      - name: Create nginx config
+        run: |
+          cat > nginx.conf << 'EOF'
+          server {
+              listen 80;
+              server_name localhost;
+              root /usr/share/nginx/html;
+              index index.html;
+              
+              location / {
+                  try_files $uri $uri/ /index.html;
+              }
+              
+              # Enable CORS for API endpoints if needed
+              location /api/ {
+                  add_header 'Access-Control-Allow-Origin' '*',
+                  add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS';
+              }
+          }
+          EOF
+
+      - name: Create .env file for docker-compose
+        run: |
+          cat > .env << EOF
+          # Minecraft Server Configuration
+          MC_VERSION=${{ steps.parse_index.outputs.game_version }}
+          MODLOADER=neoforge
+          MEMORY=8G
+          SERVER_PORT=25565
+          RCON_PORT=25575
+          ENABLE_RCON=true
+          RCON_PASSWORD=$(openssl rand -hex 16)
+          DIFFICULTY=normal
+          MODE=survival
+          MOTD=${{ steps.parse_index.outputs.modpack_name }} - ${{ steps.parse_index.outputs.modpack_version }}
+          ONLINE_MODE=true
+          
+          # Webpage Configuration
+          WEB_PORT=8080
+          EOF
+
+      - name: Commit and push changes
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          
+          git add data/ webpage/ nginx.conf .env docker-compose.yaml
+          
+          # Check if there are changes to commit
+          if ! git diff --cached --quiet; then
+            git commit -m "Deploy ${{ steps.parse_index.outputs.modpack_name }} v${{ steps.parse_index.outputs.modpack_version }}
+            
+            Generated by GitHub Actions from ${{ steps.find_mrpack.outputs.mrpack_file }}
+            
+            Generated by Mistral Vibe.
+            Co-Authored-By: Mistral Vibe <vibe@mistral.ai>"
+            
+            git push
+          else
+            echo "No changes to commit"
+          fi
+
+      - name: Cleanup extracted files
+        if: always()
+        run: rm -rf "${{ steps.extract.outputs.extracted_dir }}"

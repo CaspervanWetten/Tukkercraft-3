@@ -1,0 +1,69 @@
+name: Extract Modpack
+
+on:
+  workflow_dispatch:
+    inputs:
+      mrpack_file:
+        description: 'Name of the .mrpack file to extract'
+        required: true
+        default: ''
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find .mrpack file
+        id: find_mrpack
+        run: |
+          if [ -n "${{ github.event.inputs.mrpack_file }}" ]; then
+            MRPACK_FILE="${{ github.event.inputs.mrpack_file }}"
+          else
+            MRPACK_FILE=$(find . -maxdepth 1 -name '*.mrpack' -type f | head -n 1)
+          fi
+          
+          if [ -z "$MRPACK_FILE" ]; then
+            echo "No .mrpack file found!"
+            exit 1
+          fi
+          
+          echo "Using modpack: $MRPACK_FILE"
+          echo "mrpack_file=$MRPACK_FILE" >> $GITHUB_OUTPUT
+
+      - name: Extract .mrpack file
+        run: |
+          MRPACK_FILE="${{ steps.find_mrpack.outputs.mrpack_file }}"
+          OUTPUT_DIR="extracted-$(basename "$MRPACK_FILE" .mrpack)"
+          
+          mkdir -p "$OUTPUT_DIR"
+          unzip -q "$MRPACK_FILE" -d "$OUTPUT_DIR"
+          
+          # List extracted files
+          echo "Extracted files:"
+          find "$OUTPUT_DIR" -type f | sort
+
+      - name: Upload extracted files as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: extracted-modpack
+          path: extracted-*/
+          retention-days: 7
+
+      - name: Parse and display modpack info
+        run: |
+          INDEX_FILE="extracted-$(basename "${{ steps.find_mrpack.outputs.mrpack_file }}" .mrpack)/modrinth.index.json"
+          
+          if [ -f "$INDEX_FILE" ]; then
+            echo "Modpack Information:"
+            echo "==================="
+            jq -r '.name' "$INDEX_FILE"
+            jq -r '.versionId' "$INDEX_FILE"
+            jq -r '.game' "$INDEX_FILE"
+            echo ""
+            echo "Number of mod files: $(jq '.files | length' "$INDEX_FILE")"
+            echo ""
+            echo "Mod list:"
+            jq -r '.files[] | "- \(.path) (\(.fileSize // 0) bytes)"' "$INDEX_FILE"
+          fi
