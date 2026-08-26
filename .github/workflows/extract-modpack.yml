@@ -39,6 +39,7 @@ jobs:
           
           mkdir -p "$OUTPUT_DIR"
           unzip -q "$MRPACK_FILE" -d "$OUTPUT_DIR"
+          chmod -R u+rwX "$OUTPUT_DIR"
           
           # List extracted files
           echo "Extracted files:"
