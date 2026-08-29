@@ -5,30 +5,17 @@ build/
 dist/
 wheels/
 *.egg-info
-
-# Virtual environments
 .venv
 
-# Environment files (contains secrets - DO NOT COMMIT)
 .env
 
-# Extracted modpack files (temporary)
 extracted-*/
-
-# Docker Compose override files
 docker-compose.override.yml
-
-# IDE files
 .idea/
 .vscode/
 *.swp
 *.swo
-
-# OS files
 .DS_Store
 Thumbs.db
 
-# Note: The following are intentionally NOT ignored as they are managed by the workflow:
-# - data/ (Minecraft server data with mods and configs)
-# - webpage/ (Webpage files)
-# - nginx.conf (Nginx configuration)
+data/*

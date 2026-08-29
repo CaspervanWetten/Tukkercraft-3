@@ -5,37 +5,44 @@ services:
     restart: unless-stopped
 
     ports:
-      - "${SERVER_PORT}:25565"
-      - "${RCON_PORT}:25575"
+      - "42065:25565"
 
     environment:
       EULA: "TRUE"
-      VERSION: "${MC_VERSION}"
-      TYPE: "${MODLOADER}"
-      MEMORY: "${MEMORY:-4G}"
-
-      # Optional server settings
-      DIFFICULTY: "${DIFFICULTY:-normal}"
-      MODE: "${MODE:-survival}"
-      MOTD: "${MOTD:-A Minecraft Server}"
-      ONLINE_MODE: "${ONLINE_MODE:-true}"
-
-      # RCON
-      ENABLE_RCON: "${ENABLE_RCON:-false}"
-      RCON_PASSWORD: "${RCON_PASSWORD:-change-me}"
+      VERSION: "1.21.1"
+      TYPE: "NEOFORGE"
+      MEMORY: "4G"
+      DIFFICULTY: "hard"
+      MODE: "survival"
+      MOTD: "Tukkercraft 3! Want het kan altijd meer ;)"
+      ENABLE_RCON: "false"
+      JVM_XX_OPTS: "-XX:+UseZGC"
 
     volumes:
-      - ./data:/data
+      - RPG-Minecraft-Volume:/data
+      - ./mods:/data/mods
+      - ./config:/data/config
+      - ./whitelist.json:/data/whitelist.json
 
+  # webpage:
+  #   build: .
+  #   container_name: webpage
+  #   restart: unless-stopped
 
-  webpage:
-    image: nginx:alpine
-    container_name: webpage
-    restart: unless-stopped
+  #   ports:
+  #     - "${WEB_PORT}:8080"
 
-    ports:
-      - "${WEB_PORT}:80"
-
-    volumes:
-      - ./webpage:/usr/share/nginx/html:ro
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+  #   volumes:
+  #     - ./mods.mrpack:/app/mods.mrpack:ro
+  #     - ./src:/app/src:ro
+    
+  #   environment:
+  #     - SERVER_IP=${SERVER_IP:-localhost}
+  #     - SERVER_PORT=${SERVER_PORT:-25565}
+  #     - WEB_PORT=${WEB_PORT:-8080}
+  #     - MC_VERSION=${MC_VERSION:-1.21.1}
+  #     - MODLOADER=${MODLOADER:-neoforge}
+  #     - MOTD=${MOTD:-Tukkercraft 3 - Cappie Server}
+    
+  #   depends_on:
+  #     - minecraft
