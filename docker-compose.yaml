@@ -27,6 +27,8 @@ services:
       - ./mods:/data/mods
       - ./config:/data/config
       - ./whitelist.json:/data/whitelist.json
+      - ./ops.json:/data/ops.json
+
 
 
   # webpage:
