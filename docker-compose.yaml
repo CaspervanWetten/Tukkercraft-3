@@ -1,3 +1,7 @@
+volumes:
+  RPG-Minecraft-Volume:
+    external: true
+
 services:
   minecraft:
     image: itzg/minecraft-server:latest
@@ -23,6 +27,7 @@ services:
       - ./mods:/data/mods
       - ./config:/data/config
       - ./whitelist.json:/data/whitelist.json
+
 
   # webpage:
   #   build: .
